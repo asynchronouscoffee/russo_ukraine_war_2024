@@ -7,5 +7,6 @@
 
 lxml==3.4.4
 cssselect==0.9.1
-requests
-beautifulsoup4
+requests==2.25.1
+beautifulsoup4==4.9.3
+scraperwiki==0.5.0
