@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 import requests
 from bs4 import BeautifulSoup
 import scraperwiki
 
 def scrape_oryx_data():
     url = "https://www.oryxspioenkop.com/2022/02/attack-on-europe-documenting-ukrainian.html"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36"}
 
     try:
         # Check robots.txt compliance
@@ -16,7 +17,7 @@ def scrape_oryx_data():
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
-        categories = soup.find_all('h3', class_='mw-headline')
+        categories = soup.find_all('h3', {'class': 'mw-headline'})
         
         data = []
         for category in categories:
@@ -28,7 +29,7 @@ def scrape_oryx_data():
                 if next_element.name == 'a':
                     link = next_element.get('href')
                     if link and not link.startswith('http'):
-                        link = f"https://www.oryxspioenkop.com{link}"
+                        link = "https://www.oryxspioenkop.com" + link
                     vehicles.append({
                         'text': next_element.get_text(strip=True),
                         'url': link
@@ -40,28 +41,29 @@ def scrape_oryx_data():
         return data
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print "Error: %s" % str(e)
         return []
 
 # Morph.io entry point
 if __name__ == '__main__':
-    # Clear previous data (optional)
-    scraperwiki.sqlite.execute("DELETE FROM data")
+    # Initialize database
+    scraperwiki.sqlite.execute("CREATE TABLE IF NOT EXISTS data (category TEXT, vehicle_text TEXT, vehicle_url TEXT)")
     
     # Scrape and save to SQLite
     combat_data = scrape_oryx_data()
+    total_records = 0
+    
     for category in combat_data:
         for vehicle in category['vehicles']:
-            # Create unique key from category and vehicle text
             record = {
-                'category': category['category'],
-                'vehicle_text': vehicle['text'],
-                'vehicle_url': vehicle['url']
+                'category': category['category'].encode('utf-8'),
+                'vehicle_text': vehicle['text'].encode('utf-8'),
+                'vehicle_url': vehicle['url'].encode('utf-8')
             }
-            # Save with composite unique key
             scraperwiki.sqlite.save(
                 unique_keys=['category', 'vehicle_text'],
                 data=record
             )
+            total_records += 1
     
-    print(f"Successfully saved {len(combat_data)} categories to database")
+    print "Successfully saved %d records across %d categories" % (total_records, len(combat_data))
