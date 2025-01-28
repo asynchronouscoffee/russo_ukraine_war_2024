@@ -1,69 +1,71 @@
-# -*- coding: utf-8 -*-
 import requests
 from bs4 import BeautifulSoup
 import scraperwiki
 
 def scrape_oryx_data():
     url = "https://www.oryxspioenkop.com/2022/02/attack-on-europe-documenting-ukrainian.html"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    }
 
     try:
         # Check robots.txt compliance
-        robots = requests.get("https://www.oryxspioenkop.com/robots.txt")
+        robots = requests.get("https://www.oryxspioenkop.com/robots.txt", timeout=10)
         if "disallow: /2022/02/attack-on-europe" in robots.text.lower():
-            raise Exception("Scraping disallowed by robots.txt")
+            raise RuntimeError("Scraping disallowed by robots.txt")
 
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
-        categories = soup.find_all('h3', {'class': 'mw-headline'})
+        categories = soup.find_all('h3', class_='mw-headline')
         
-        data = []
-        for category in categories:
-            category_name = category.get_text(strip=True)
-            vehicles = []
-            
-            next_element = category.find_next_sibling()
-            while next_element and next_element.name != 'h3':
-                if next_element.name == 'a':
-                    link = next_element.get('href')
-                    if link and not link.startswith('http'):
-                        link = "https://www.oryxspioenkop.com" + link
-                    vehicles.append({
-                        'text': next_element.get_text(strip=True),
-                        'url': link
-                    })
-                next_element = next_element.find_next_sibling()
-            
-            data.append({'category': category_name, 'vehicles': vehicles})
-        
-        return data
+        return [
+            {
+                "category": cat.get_text(strip=True),
+                "vehicles": [
+                    {
+                        "text": a.get_text(strip=True),
+                        "url": f"https://www.oryxspioenkop.com{a['href']}" 
+                        if a['href'].startswith('/') else a['href']
+                    }
+                    for a in cat.find_next_siblings('a')
+                    if cat.find_next_sibling() and cat.find_next_sibling().name != 'h3'
+                ]
+            }
+            for cat in categories
+        ]
 
     except Exception as e:
-        print "Error: %s" % str(e)
+        print(f"Scraping failed: {str(e)}")
         return []
 
-# Morph.io entry point
 if __name__ == '__main__':
-    # Initialize database
-    scraperwiki.sqlite.execute("CREATE TABLE IF NOT EXISTS data (category TEXT, vehicle_text TEXT, vehicle_url TEXT)")
+    # Clear previous data
+    scraperwiki.sqlite.execute("DROP TABLE IF EXISTS combat_vehicles")
     
-    # Scrape and save to SQLite
-    combat_data = scrape_oryx_data()
-    total_records = 0
+    # Create fresh table
+    scraperwiki.sqlite.execute("""
+        CREATE TABLE combat_vehicles (
+            category TEXT,
+            vehicle_name TEXT,
+            vehicle_url TEXT,
+            UNIQUE(category, vehicle_name)
+        )
+    """)
     
-    for category in combat_data:
+    # Insert new data
+    data = scrape_oryx_data()
+    for category in data:
         for vehicle in category['vehicles']:
-            record = {
-                'category': category['category'].encode('utf-8'),
-                'vehicle_text': vehicle['text'].encode('utf-8'),
-                'vehicle_url': vehicle['url'].encode('utf-8')
-            }
             scraperwiki.sqlite.save(
-                unique_keys=['category', 'vehicle_text'],
-                data=record
+                unique_keys=['category', 'vehicle_name'],
+                data={
+                    'category': category['category'],
+                    'vehicle_name': vehicle['text'],
+                    'vehicle_url': vehicle['url']
+                },
+                table_name='combat_vehicles'
             )
-            total_records += 1
     
-    print "Successfully saved %d records across %d categories" % (total_records, len(combat_data))
+    print(f"Successfully stored {sum(len(c['vehicles']) for c in data)} vehicles")
