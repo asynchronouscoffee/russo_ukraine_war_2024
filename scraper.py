@@ -2,70 +2,67 @@ import requests
 from bs4 import BeautifulSoup
 import scraperwiki
 
-def scrape_oryx_data():
+def safe_get_text(element):
+    return element.get_text(strip=True) if element else ''
+
+def scrape_vehicles():
     url = "https://www.oryxspioenkop.com/2022/02/attack-on-europe-documenting-ukrainian.html"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-    }
-
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.92 Safari/537.36"}
+    
     try:
-        # Check robots.txt compliance
-        robots = requests.get("https://www.oryxspioenkop.com/robots.txt", timeout=10)
-        if "disallow: /2022/02/attack-on-europe" in robots.text.lower():
-            raise RuntimeError("Scraping disallowed by robots.txt")
-
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.content, 'html.parser')
-        categories = soup.find_all('h3', class_='mw-headline')
         
-        return [
-            {
-                "category": cat.get_text(strip=True),
-                "vehicles": [
-                    {
-                        "text": a.get_text(strip=True),
-                        "url": f"https://www.oryxspioenkop.com{a['href']}" 
-                        if a['href'].startswith('/') else a['href']
-                    }
-                    for a in cat.find_next_siblings('a')
-                    if cat.find_next_sibling() and cat.find_next_sibling().name != 'h3'
-                ]
-            }
-            for cat in categories
-        ]
-
+        categories = []
+        for h3 in soup.find_all('h3', {'class': 'mw-headline'}):
+            category_name = safe_get_text(h3)
+            vehicles = []
+            
+            sibling = h3.find_next_sibling()
+            while sibling and sibling.name != 'h3':
+                if sibling.name == 'a':
+                    link = sibling.get('href', '')
+                    if link.startswith('/'):
+                        link = 'https://www.oryxspioenkop.com' + link
+                    vehicles.append({
+                        'name': safe_get_text(sibling),
+                        'url': link
+                    })
+                sibling = sibling.find_next_sibling()
+            
+            categories.append({'category': category_name, 'vehicles': vehicles})
+        
+        return categories
+    
     except Exception as e:
-        print(f"Scraping failed: {str(e)}")
+        print("Scraping error: {}".format(str(e)))
         return []
 
 if __name__ == '__main__':
-    # Clear previous data
-    scraperwiki.sqlite.execute("DROP TABLE IF EXISTS combat_vehicles")
-    
-    # Create fresh table
-    scraperwiki.sqlite.execute("""
-        CREATE TABLE combat_vehicles (
+    scraperwiki.sql.execute('''
+        CREATE TABLE IF NOT EXISTS vehicles (
             category TEXT,
             vehicle_name TEXT,
             vehicle_url TEXT,
             UNIQUE(category, vehicle_name)
         )
-    """)
+    ''')
     
-    # Insert new data
-    data = scrape_oryx_data()
-    for category in data:
-        for vehicle in category['vehicles']:
-            scraperwiki.sqlite.save(
+    data = scrape_vehicles()
+    total = 0
+    
+    for cat in data:
+        for vehicle in cat['vehicles']:
+            scraperwiki.sql.save(
                 unique_keys=['category', 'vehicle_name'],
                 data={
-                    'category': category['category'],
-                    'vehicle_name': vehicle['text'],
+                    'category': cat['category'],
+                    'vehicle_name': vehicle['name'],
                     'vehicle_url': vehicle['url']
                 },
-                table_name='combat_vehicles'
+                table_name='vehicles'
             )
+            total += 1
     
-    print(f"Successfully stored {sum(len(c['vehicles']) for c in data)} vehicles")
+    print("Successfully stored {} vehicle records".format(total))
